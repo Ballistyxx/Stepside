@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stepside viewer</title>
+<link rel="stylesheet" href="viewer.css">
+<script type="module" src="viewer.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="status" role="status" aria-live="polite">
+  <div class="spinner" aria-hidden="true"></div>
+  <div id="status-text">Starting…</div>
+  <div id="status-bar" hidden><i></i></div>
+  <div id="status-actions"></div>
+</div>
+<div id="tools" hidden>
+  <button id="b-fit" type="button" title="Reset view (F)" aria-label="Reset view">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.906.664a1.749 1.749 0 0 1 2.187 0l5.25 4.2c.415.332.657.835.657 1.367v7.019A1.75 1.75 0 0 1 13.25 15h-3.5a.75.75 0 0 1-.75-.75V9H7v5.25a.75.75 0 0 1-.75.75h-3.5A1.75 1.75 0 0 1 1 13.25V6.23c0-.531.242-1.034.657-1.366l5.25-4.2Zm1.25 1.171a.25.25 0 0 0-.312 0l-5.25 4.2a.25.25 0 0 0-.094.196v7.019c0 .138.112.25.25.25H5.5V8.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v5.25h2.75a.25.25 0 0 0 .25-.25V6.23a.25.25 0 0 0-.094-.195Z"/></svg>
+  </button>
+  <button id="b-edges" type="button" title="Toggle edges (E)" aria-label="Toggle edges" aria-pressed="true">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.37.14a.75.75 0 0 0-.74 0l-6.25 3.5a.75.75 0 0 0-.38.65v7.42c0 .27.15.52.38.65l6.25 3.5c.23.13.51.13.74 0l6.25-3.5a.75.75 0 0 0 .38-.65V4.29a.75.75 0 0 0-.38-.65ZM8 1.66l4.72 2.64L8 6.94 3.28 4.3Zm-5.5 3.9 4.75 2.66v5.3L2.5 10.86Zm6.25 7.96v-5.3l4.75-2.66v5.3Z"/></svg>
+  </button>
+  <button id="b-up" type="button" title="Up axis" aria-label="Switch up axis">Y</button>
+  <button id="b-full" type="button" title="Fullscreen" aria-label="Fullscreen">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 1h3.5a.75.75 0 0 1 0 1.5H2.5v2.75a.75.75 0 0 1-1.5 0v-3.5C1 1.34 1.34 1 1.75 1Zm9 0h3.5c.41 0 .75.34.75.75v3.5a.75.75 0 0 1-1.5 0V2.5h-2.75a.75.75 0 0 1 0-1.5ZM1.75 10.5c.41 0 .75.34.75.75v2.25h2.75a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75v-3c0-.41.34-.75.75-.75Zm12.5 0c.41 0 .75.34.75.75v3a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h2.75v-2.25c0-.41.34-.75.75-.75Z"/></svg>
+  </button>
+</div>
+<div id="info" hidden></div>
+</body>
+</html>

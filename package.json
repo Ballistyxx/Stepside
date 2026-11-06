@@ -1,0 +1,29 @@
+{
+  "name": "stepside",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native 3D previews for STEP, IGES, OBJ, PLY, OFF, VRML and glTF files on GitHub.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "test": "node --test test/*.test.mjs",
+    "lint": "web-ext lint --source-dir dist/firefox",
+    "start:firefox": "web-ext run --source-dir dist/firefox --start-url https://github.com/kovacsv/occt-import-js/blob/main/test/testfiles/cax-if/as1_pe_203.stp",
+    "package": "node scripts/build.mjs --package",
+    "e2e:firefox": "node test/e2e-firefox.mjs",
+    "e2e:firefox:nav": "node test/e2e-nav-firefox.mjs",
+    "e2e:chrome": "node test/e2e-chrome.mjs",
+    "icons": "node scripts/icons.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.187.0",
+    "webextension-polyfill": "^0.12.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.0",
+    "selenium-webdriver": "^4.51.0"
+  }
+}
