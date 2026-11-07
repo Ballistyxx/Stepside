@@ -9,9 +9,12 @@ export function loadOcct(baseUrl) {
     enginePromise = (async () => {
       const wasmUrl = new URL('vendor/stepside-occt.wasm', baseUrl).href;
       // Start download + streaming compile while the JS glue loads.
+      // compileStreaming rejects responses not served as application/wasm,
+      // which extension URLs aren't guaranteed to be (e.g. in Safari).
+      const compileBuffered = () => fetch(wasmUrl).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b));
       const modulePromise = WebAssembly.compileStreaming
-        ? WebAssembly.compileStreaming(fetch(wasmUrl))
-        : fetch(wasmUrl).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b));
+        ? WebAssembly.compileStreaming(fetch(wasmUrl)).catch(compileBuffered)
+        : compileBuffered();
       importScripts(new URL('vendor/stepside-occt.js', baseUrl).href);
       const module = await modulePromise;
       return self.stepsideOcct({

@@ -1,4 +1,4 @@
-// Builds dist/firefox and dist/chrome from one source tree.
+// Builds dist/firefox, dist/chrome and dist/safari from one source tree.
 //   node scripts/build.mjs            production build (minified)
 //   node scripts/build.mjs --watch    rebuild on change (unminified, sourcemaps)
 //   node scripts/build.mjs --package  build + zip into dist/*.zip
@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const watch = process.argv.includes('--watch');
 const packageZip = process.argv.includes('--package');
-const targets = ['firefox', 'chrome'];
+const targets = ['firefox', 'chrome', 'safari'];
 
 function manifest(target) {
   const m = {
@@ -45,6 +45,10 @@ function manifest(target) {
       },
       gecko_android: { strict_min_version: '142.0' },
     };
+  } else if (target === 'safari') {
+    // Safari loads this folder through an Xcode app wrapper: npm run safari.
+    m.browser_specific_settings = { safari: { strict_min_version: '17.0' } };
+    m.options_ui = { page: m.options_ui.page }; // Safari doesn't support open_in_tab
   } else {
     m.minimum_chrome_version = '120';
   }
@@ -57,7 +61,7 @@ const common = {
   sourcemap: watch ? 'linked' : false,
   legalComments: 'none',
   logLevel: 'info',
-  target: ['firefox128', 'chrome116'],
+  target: ['firefox128', 'chrome116', 'safari17'],
 };
 
 function copyStatic(out) {
