@@ -210,7 +210,7 @@ function centre(pos) {
   return { center: [cx, cy, cz], size, radius: Math.hypot(size[0], size[1], size[2]) / 2 };
 }
 
-function toInt16Normals(n) {
+export function toInt16Normals(n) {
   const out = new Int16Array(n.length);
   for (let i = 0; i < n.length; i++) {
     const v = n[i];
@@ -219,7 +219,7 @@ function toInt16Normals(n) {
   return out;
 }
 
-function linearize(c) {
+export function linearize(c) {
   for (let i = 0; i < c.length; i++) c[i] = SRGB_TO_LINEAR[c[i]];
   return c;
 }
@@ -246,14 +246,16 @@ export function finalize(parts, { wantEdges = true, edgeAngle = 30 } = {}) {
   const allUniform = procs.every((q) => !q.color);
   const oneColor = allUniform && procs.every((q) => sameColor(q.uniform, procs[0].uniform));
   const color = oneColor ? null : new Uint8Array(nv * 3);
-  const anyIndexed = procs.some((q) => q.index);
+  // Always indexed: the viewer keeps only the index on the CPU (for wireframe).
   const IndexCtor = nv <= 65535 ? Uint16Array : Uint32Array;
-  const index = anyIndexed ? new IndexCtor(nt * 3) : null;
+  const index = new IndexCtor(nt * 3);
   const anyGroups = procs.some((q) => q.faceGroup);
   const faceGroup = anyGroups && wantEdges ? new Uint32Array(nt) : null;
 
   let vo = 0, io = 0, to = 0, go = 0;
+  const partRanges = [];
   for (const q of procs) {
+    partRanges.push([to, q.nt]);
     const qnv = q.position.length / 3;
     position.set(q.position, vo * 3);
     normalF.set(q.normal, vo * 3);
@@ -286,8 +288,11 @@ export function finalize(parts, { wantEdges = true, edgeAngle = 30 } = {}) {
   }
 
   const box = centre(position);
+  const tree = buildTree(meshParts, partRanges, position, index);
   const mesh = {
     type: 'mesh',
+    tree: tree ? tree.nodes : null,
+    treeBounds: tree ? tree.bounds : null,
     position,
     normal: toInt16Normals(normalF),
     color: color ? linearize(color) : null,
@@ -299,13 +304,44 @@ export function finalize(parts, { wantEdges = true, edgeAngle = 30 } = {}) {
   };
   const transfer = [position.buffer, mesh.normal.buffer];
   if (mesh.color) transfer.push(mesh.color.buffer);
-  if (index) transfer.push(index.buffer);
+  transfer.push(index.buffer);
+  if (tree) transfer.push(tree.bounds.buffer);
 
   let edgeInput = null;
   if (wantEdges && nt <= EDGE_LIMIT) {
-    edgeInput = { position: position.slice(), index: index ? index.slice() : null, faceGroup, edgeAngle };
+    edgeInput = { position: position.slice(), index: index.slice(), faceGroup, edgeAngle };
   }
   return { mesh, transfer, edgeInput };
+}
+
+/**
+ * Model tree with absolute triangle ranges [start, count] and a bounding box
+ * per node (in the centred frame). CAD parts bring their own assembly tree;
+ * other formats get one node per named part when there is more than one.
+ */
+function buildTree(parts, ranges, position, index) {
+  let nodes = null;
+  if (parts.length === 1 && parts[0].tree) nodes = parts[0].tree.map((n) => ({ ...n }));
+  else if (parts.length > 1 && parts.some((p) => p.name)) {
+    nodes = parts.map((p, i) => ({ name: p.name || `Part ${i + 1}`, depth: 0, start: ranges[i][0], count: ranges[i][1] }));
+  } else if (parts.length === 1 && parts[0].groups && parts[0].groups.length > 1) {
+    nodes = parts[0].groups.map((g) => ({ name: g.name, depth: 0, start: g.start, count: g.count }));
+  }
+  if (!nodes || !nodes.length) return null;
+  const bounds = new Float32Array(nodes.length * 6);
+  for (let k = 0; k < nodes.length; k++) {
+    const { start, count } = nodes[k];
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let i = start * 3, e = (start + count) * 3; i < e; i++) {
+      const v = index[i] * 3, x = position[v], y = position[v + 1], z = position[v + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    if (x0 > x1) x0 = y0 = z0 = x1 = y1 = z1 = 0;
+    bounds.set([x0, y0, z0, x1, y1, z1], k * 6);
+  }
+  return { nodes, bounds };
 }
 
 function finalizePoints(parts) {
@@ -423,13 +459,17 @@ export function featureEdges({ position, index, faceGroup, edgeAngle = 30 }) {
     if (k) { keep[i] = 1; ne++; }
   }
   const out = new Float32Array(ne * 6);
-  let o = 0;
+  // Source triangle of each segment. Slots were appended in triangle order, so
+  // this is ascending: the edges of any triangle range form a contiguous run.
+  const tri = new Uint32Array(ne);
+  let o = 0, e = 0;
   for (let i = 0; i < nused; i++) {
     if (!keep[i]) continue;
     const h = used[i];
+    tri[e++] = t1[h];
     const a = rep[ka[h]] * 3, b = rep[kb[h]] * 3;
     out[o++] = position[a]; out[o++] = position[a + 1]; out[o++] = position[a + 2];
     out[o++] = position[b]; out[o++] = position[b + 1]; out[o++] = position[b + 2];
   }
-  return out;
+  return { positions: out, tri };
 }

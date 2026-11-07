@@ -41,6 +41,9 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <XCAFPrs_DocumentExplorer.hxx>
+#include <TDataStd_Name.hxx>
+#include <TCollection_AsciiString.hxx>
+#include <unordered_map>
 #include <UnitsMethods_LengthUnit.hxx>
 
 #include <chrono>
@@ -146,7 +149,6 @@ struct Output
   std::vector<uint32_t> index, faceGroup;
   std::vector<uint8_t>  color;
   uint32_t              faces = 0;
-  uint32_t              skipped = 0; //!< leaf parts that failed to export
 };
 
 constexpr uint32_t ANGLE_GROUP = 0xffffffffu;
@@ -171,11 +173,11 @@ val typedArray(const char* ctor, const std::vector<T>& v)
   return val::global(ctor).new_(emscripten::typed_memory_view(v.size(), v.data()));
 }
 
-bool readStep(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Document>& doc, JsProgress& js, bool heal)
+bool readStep(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Document>& doc, JsProgress& js, bool heal, bool names)
 {
   STEPCAFControl_Reader reader;
   reader.SetColorMode(true);
-  reader.SetNameMode(false);
+  reader.SetNameMode(names);
   reader.SetLayerMode(false);
   reader.SetPropsMode(false);
   reader.SetGDTMode(false);
@@ -212,7 +214,7 @@ bool readStep(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Docume
   return reader.Transfer(doc, pi->Start());
 }
 
-bool readIges(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Document>& doc, JsProgress& js)
+bool readIges(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Document>& doc, JsProgress& js, bool names)
 {
   {
     std::ofstream f("/tmp/model.igs", std::ios::binary);
@@ -220,7 +222,7 @@ bool readIges(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Docume
   }
   IGESCAFControl_Reader reader;
   reader.SetColorMode(true);
-  reader.SetNameMode(false);
+  reader.SetNameMode(names);
   reader.SetLayerMode(false);
   if (reader.ReadFile("/tmp/model.igs") != IFSelect_RetDone)
     return false;
@@ -245,18 +247,55 @@ bool readBrep(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Docume
   return true;
 }
 
-void exportMesh(const occ::handle<TDocStd_Document>& doc, Output& out, JsProgress& js, int nodeEstimate)
+std::string labelName(const TDF_Label& label)
 {
-  int nodes = 0;
-  for (XCAFPrs_DocumentExplorer ex(doc, XCAFPrs_DocumentExplorerFlags_OnlyLeafNodes); ex.More(); ex.Next())
+  occ::handle<TDataStd_Name> attr;
+  if (label.IsNull() || !label.FindAttribute(TDataStd_Name::GetID(), attr))
+    return std::string();
+  TCollection_AsciiString utf8(attr->Get());
+  return std::string(utf8.ToCString());
+}
+
+//! A leaf of the assembly tree: one placed instance of a part prototype.
+struct Leaf
+{
+  TDF_Label       ref;
+  TopLoc_Location loc;
+  XCAFPrs_Style   style;
+  TopoDS_Shape    proto; //!< part shape at its own origin (shared TShape)
+  int             faces = 0;
+  int             triStart = 0, triCount = 0; //!< filled by the final pass
+};
+
+struct TreeNode
+{
+  std::string name;
+  int         depth = 0;
+  int         leaf  = -1;
+};
+
+//! Maps a BRepMesh run onto a sub-range [a, b] of the mesh phase.
+class RangeProgress : public Message_ProgressIndicator
+{
+public:
+  RangeProgress(JsProgress& js, double a, double b) : myJs(js), myA(a), myB(b) {}
+  void Show(const Message_ProgressScope&, const bool) override { myJs.report(PhaseMesh, myA + (myB - myA) * GetPosition()); }
+  bool UserBreak() override { return false; }
+
+private:
+  JsProgress& myJs;
+  double      myA, myB;
+};
+
+//! Appends one placed part to `out`. Returns false if the part was broken.
+bool exportLeaf(const Leaf& leaf, Output& out)
+{
+  const size_t   triStart  = out.index.size() / 3;
+  const uint32_t faceStart = out.faces;
+  const size_t   posStart = out.position.size(), colStart = out.color.size();
+  try
   {
-    const XCAFPrs_DocumentNode& node = ex.Current();
-    const size_t   triStart  = out.index.size() / 3;
-    const uint32_t faceStart = out.faces;
-    const size_t   posStart = out.position.size(), colStart = out.color.size();
-    try
-    {
-    for (RWMesh_FaceIterator it(node.RefLabel, node.Location, true, node.Style); it.More(); it.Next())
+    for (RWMesh_FaceIterator it(leaf.ref, leaf.loc, true, leaf.style); it.More(); it.Next())
     {
       if (it.IsEmpty())
         continue;
@@ -286,32 +325,43 @@ void exportMesh(const occ::handle<TDocStd_Document>& doc, Output& out, JsProgres
       }
       ++out.faces;
     }
-    }
-    catch (const Standard_Failure&)
-    {
-      // A broken part: drop whatever it emitted and keep the rest of the model.
-      out.position.resize(posStart); out.normal.resize(posStart); out.color.resize(colStart);
-      out.index.resize(triStart * 3); out.faceGroup.resize(triStart); out.faces = faceStart;
-      ++out.skipped;
-    }
-    // Solids converted from meshes (STL -> STEP) have ~one B-rep face per
-    // triangle; drawing every face boundary would just show the tessellation.
-    const uint32_t nf = out.faces - faceStart;
-    const size_t   nt = out.index.size() / 3 - triStart;
-    if (nf > 64 && double(nt) / nf < 2.5)
-      std::fill(out.faceGroup.begin() + triStart, out.faceGroup.end(), ANGLE_GROUP);
-    ++nodes;
-    js.report(PhaseExport, nodeEstimate > 0 ? std::min(1.0, double(nodes) / nodeEstimate) : 0.5);
   }
-  js.report(PhaseExport, 1.0);
+  catch (const Standard_Failure&)
+  {
+    // A broken part: drop whatever it emitted and keep the rest of the model.
+    out.position.resize(posStart); out.normal.resize(posStart); out.color.resize(colStart);
+    out.index.resize(triStart * 3); out.faceGroup.resize(triStart); out.faces = faceStart;
+    return false;
+  }
+  // Solids converted from meshes (STL -> STEP) have ~one B-rep face per
+  // triangle; drawing every face boundary would just show the tessellation.
+  const uint32_t nf = out.faces - faceStart;
+  const size_t   nt = out.index.size() / 3 - triStart;
+  if (nf > 64 && double(nt) / nf < 2.5)
+    std::fill(out.faceGroup.begin() + triStart, out.faceGroup.end(), ANGLE_GROUP);
+  return true;
 }
 
-val readImpl(const std::string& format, const val& bytes, double linDeflRatio, double angDefl, const val& progressCb, bool heal)
+template <typename T>
+val slice(const char* ctor, const std::vector<T>& v, size_t from)
+{
+  return val::global(ctor).new_(emscripten::typed_memory_view(v.size() - from, v.data() + from));
+}
+
+val readImpl(const std::string& format, const val& bytes, const val& opts, const val& progressCb, const val& chunkCb)
 {
   silenceMessenger();
   JsProgress js(progressCb);
-  val        result = val::object();
+  val        result  = val::object();
   val        timings = val::object();
+
+  const double linRatio    = opts["linear"].as<double>();
+  const double angDefl     = opts["angular"].as<double>();
+  const bool   heal        = opts["heal"].as<bool>();
+  const bool   wantNames   = opts["names"].as<bool>();
+  const bool   coarseFirst = opts["coarse"].as<bool>();
+  const bool   progressive = opts["progressive"].as<bool>();
+  const bool   streaming   = !chunkCb.isUndefined() && !chunkCb.isNull();
 
   std::vector<uint8_t> data = emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
 
@@ -321,7 +371,9 @@ val readImpl(const std::string& format, const val& bytes, double linDeflRatio, d
   XCAFDoc_DocumentTool::SetLengthUnit(doc, 1.0, UnitsMethods_LengthUnit_Millimeter);
 
   double t0 = now();
-  bool ok = format == "iges" ? readIges(data, doc, js) : format == "brep" ? readBrep(data, doc, js) : readStep(data, doc, js, heal);
+  bool ok = format == "iges" ? readIges(data, doc, js, wantNames)
+          : format == "brep" ? readBrep(data, doc, js)
+                             : readStep(data, doc, js, heal, wantNames);
   std::vector<uint8_t>().swap(data);
   double t1 = now();
   timings.set("read", t1 - t0);
@@ -331,35 +383,51 @@ val readImpl(const std::string& format, const val& bytes, double linDeflRatio, d
     return result;
   }
 
-  // Mesh each unique part prototype once, at its own origin. Triangulations
-  // live on the (shared) TFaces, so every instance of a part reuses them.
-  // Meshing the whole assembly as one compound instead makes BRepMesh treat
-  // each located instance as separate faces: N instances of a big part cost N
-  // times the work and memory (enough to exhaust the 4 GB WASM heap).
-  occ::handle<XCAFDoc_ShapeTool> shapeTool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
-  NCollection_Sequence<TDF_Label> labels;
-  shapeTool->GetShapes(labels);
-  std::vector<std::pair<TopoDS_Shape, int>> parts; // prototype, face count
-  int  totalFaces   = 0;
-  int  leafEstimate = labels.Length();
-  for (const TDF_Label& l : labels)
+  // ---- Assembly tree and leaves (placed part instances), in DFS order -----
+  std::vector<TreeNode> tree;
+  std::vector<Leaf>     leaves;
+  std::unordered_map<const void*, int> faceCount; // per prototype TShape
+  for (XCAFPrs_DocumentExplorer ex(doc, XCAFPrs_DocumentExplorerFlags_None); ex.More(); ex.Next())
   {
-    if (XCAFDoc_ShapeTool::IsAssembly(l))
-      continue;
-    TopoDS_Shape s = XCAFDoc_ShapeTool::GetShape(l);
-    if (s.IsNull())
-      continue;
-    s.Location(TopLoc_Location());
-    int nf = 0;
-    for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next())
-      ++nf;
-    if (nf == 0)
-      continue;
-    parts.emplace_back(s, nf);
-    totalFaces += nf;
+    const XCAFPrs_DocumentNode& node = ex.Current();
+    TreeNode tn;
+    tn.depth = ex.CurrentDepth();
+    if (wantNames)
+    {
+      tn.name = labelName(node.Label);
+      if (tn.name.empty())
+        tn.name = labelName(node.RefLabel);
+    }
+    if (!node.IsAssembly)
+    {
+      Leaf leaf;
+      leaf.ref   = node.RefLabel;
+      leaf.loc   = node.Location;
+      leaf.style = node.Style;
+      leaf.proto = XCAFDoc_ShapeTool::GetShape(node.RefLabel);
+      if (!leaf.proto.IsNull())
+      {
+        leaf.proto.Location(TopLoc_Location());
+        const void* key = leaf.proto.TShape().get();
+        auto it = faceCount.find(key);
+        if (it == faceCount.end())
+        {
+          int nf = 0;
+          for (TopExp_Explorer f(leaf.proto, TopAbs_FACE); f.More(); f.Next())
+            ++nf;
+          it = faceCount.emplace(key, nf).first;
+        }
+        leaf.faces = it->second;
+      }
+      tn.leaf = (int)leaves.size();
+      leaves.push_back(leaf);
+    }
+    tree.push_back(tn);
   }
+
   // Deflection is relative to the assembled model's size (as placed), so
   // tessellation density doesn't depend on how the file structures parts.
+  occ::handle<XCAFDoc_ShapeTool> shapeTool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
   Bnd_Box box;
   {
     NCollection_Sequence<TDF_Label> roots;
@@ -378,37 +446,163 @@ val readImpl(const std::string& format, const val& bytes, double linDeflRatio, d
     box.Get(x0, y0, z0, x1, y1, z1);
     const double avg = ((x1 - x0) + (y1 - y0) + (z1 - z0)) / 3.0;
     if (avg > 0)
-      deflection = avg * linDeflRatio;
-  }
-  IMeshTools_Parameters params;
-  params.Deflection = deflection;
-  params.Angle      = angDefl;
-  params.InParallel = false;
-  {
-    occ::handle<OcctProgress> pi = new OcctProgress(js, PhaseMesh);
-    Message_ProgressScope     scope(pi->Start(), "Mesh", std::max(1, totalFaces));
-    for (const auto& [shape, nf] : parts)
+      deflection = avg * linRatio;
+    if (streaming)
     {
-      Message_ProgressRange range = scope.Next(nf);
-      try
-      {
-        BRepMesh_IncrementalMesh mesher(shape, params, range);
-      }
-      catch (const Standard_Failure&)
-      {
-        // Leave this part (partly) untriangulated; export skips empty faces.
-      }
+      val b = val::object();
+      b.set("type", std::string("bounds"));
+      b.set("center", val::array(std::vector<double>{(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}));
+      b.set("radius", 0.5 * std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0)));
+      chunkCb(b);
     }
   }
+
+  // ---- Chunks: consecutive leaves of roughly equal face count -------------
+  // The same chunking is used by every pass, so the viewer can replace coarse
+  // chunk i with fine chunk i.
+  long long instFaces = 0, uniqFaces = 0;
+  for (const Leaf& l : leaves)
+    instFaces += l.faces;
+  for (const auto& kv : faceCount)
+    uniqFaces += kv.second;
+  const long long chunkTarget = std::max<long long>(2000, instFaces / 24);
+  std::vector<std::pair<int, int>> chunks; // [first leaf, end leaf)
+  for (int i = 0, n = (int)leaves.size(); i < n;)
+  {
+    int       j   = i;
+    long long acc = 0;
+    while (j < n && (acc < chunkTarget || j == i))
+      acc += leaves[j++].faces;
+    chunks.emplace_back(i, j);
+    i = j;
+  }
+
+  // ---- Mesh + export passes ----------------------------------------------
+  // Mesh each unique part prototype once, at its own origin. Triangulations
+  // live on the (shared) TFaces, so every instance of a part reuses them.
+  // (Meshing the assembled compound instead makes BRepMesh treat each placed
+  // instance as separate faces: N instances cost N times the work and memory —
+  // enough to exhaust the 4 GB WASM heap on big assemblies.)
+  std::unordered_map<const void*, int> meshedIn; // TShape -> pass that meshed it
+  const double coarseShare = coarseFirst ? 0.2 : 0.0;
+  const double exportWeight = 0.05; // export cost per instance face vs mesh cost per unique face
+  Output   out;     // final (fine) model
+  uint32_t skipped = 0;
+
+  auto runPass = [&](int pass, double linDefl, double ang, double from, double to, bool final) {
+    IMeshTools_Parameters params;
+    params.Deflection = linDefl;
+    params.Angle      = ang;
+    params.InParallel = false;
+    const double total = double(uniqFaces) + exportWeight * double(instFaces) + 1e-9;
+    double       done  = 0;
+    Output       coarse;
+    Output&      dst  = final ? out : coarse;
+    const bool   emitChunks = streaming && progressive;
+    for (size_t c = 0; c < chunks.size(); ++c)
+    {
+      const auto [first, end] = chunks[c];
+      for (int i = first; i < end; ++i)
+      {
+        const Leaf& leaf = leaves[i];
+        if (leaf.proto.IsNull())
+          continue;
+        const void* key = leaf.proto.TShape().get();
+        auto        m   = meshedIn.find(key);
+        if (m != meshedIn.end() && m->second == pass)
+          continue;
+        const double a = from + (to - from) * done / total;
+        done += leaf.faces;
+        const double b = from + (to - from) * done / total;
+        try
+        {
+          if (m != meshedIn.end())
+            BRepTools::Clean(leaf.proto); // replace the coarse triangulation
+          occ::handle<RangeProgress> pi = new RangeProgress(js, a, b);
+          BRepMesh_IncrementalMesh   mesher(leaf.proto, params, pi->Start());
+        }
+        catch (const Standard_Failure&)
+        {
+          // Leave this part (partly) untriangulated; export skips empty faces.
+        }
+        meshedIn[key] = pass;
+      }
+      const size_t pos0 = dst.position.size(), col0 = dst.color.size(), idx0 = dst.index.size();
+      for (int i = first; i < end; ++i)
+      {
+        Leaf&     leaf     = leaves[i];
+        const int triStart = (int)(dst.index.size() / 3);
+        if (!exportLeaf(leaf, dst) && final)
+          ++skipped;
+        if (final)
+        {
+          leaf.triStart = triStart;
+          leaf.triCount = (int)(dst.index.size() / 3) - triStart;
+        }
+        done += exportWeight * leaf.faces;
+      }
+      js.report(PhaseMesh, from + (to - from) * std::min(1.0, done / total));
+      if (emitChunks && dst.index.size() > idx0)
+      {
+        val ch = val::object();
+        ch.set("type", std::string("chunk"));
+        ch.set("pass", pass);
+        ch.set("chunk", (int)c);
+        ch.set("count", (int)chunks.size());
+        ch.set("baseVertex", (int)(pos0 / 3));
+        ch.set("position", slice("Float32Array", dst.position, pos0));
+        ch.set("normal", slice("Float32Array", dst.normal, pos0));
+        ch.set("color", slice("Uint8Array", dst.color, col0));
+        ch.set("index", slice("Uint32Array", dst.index, idx0));
+        chunkCb(ch);
+      }
+      if (!final && emitChunks)
+      {
+        coarse = Output(); // already shown; nothing to keep
+      }
+    }
+    if (!final && streaming && !emitChunks && !coarse.index.empty())
+    {
+      // Fast first look without progressive display: one coarse model.
+      val ch = val::object();
+      ch.set("type", std::string("chunk"));
+      ch.set("pass", pass);
+      ch.set("chunk", 0);
+      ch.set("count", 1);
+      ch.set("baseVertex", 0);
+      ch.set("position", slice("Float32Array", coarse.position, 0));
+      ch.set("normal", slice("Float32Array", coarse.normal, 0));
+      ch.set("color", slice("Uint8Array", coarse.color, 0));
+      ch.set("index", slice("Uint32Array", coarse.index, 0));
+      chunkCb(ch);
+    }
+  };
+
+  if (coarseFirst && streaming)
+    runPass(0, deflection * 6.0, std::max(angDefl * 2.0, 1.0), 0.0, coarseShare, false);
+  runPass(1, deflection, angDefl, coarseFirst && streaming ? coarseShare : 0.0, 1.0, true);
   js.report(PhaseMesh, 1.0);
   double t2 = now();
   timings.set("mesh", t2 - t1);
-
-  Output out;
-  exportMesh(doc, out, js, leafEstimate);
   doc->Close();
-  double t3 = now();
-  timings.set("export", t3 - t2);
+
+  // ---- Result ------------------------------------------------------------
+  const int nn = (int)tree.size();
+  std::vector<int32_t> depth(nn), leafStart(nn), leafCount(nn);
+  val names = val::array();
+  for (int i = 0; i < nn; ++i)
+  {
+    depth[i] = tree[i].depth;
+    const int l = tree[i].leaf;
+    leafStart[i] = l >= 0 ? leaves[l].triStart : -1;
+    leafCount[i] = l >= 0 ? leaves[l].triCount : 0;
+    names.set(i, tree[i].name);
+  }
+  val treeObj = val::object();
+  treeObj.set("names", names);
+  treeObj.set("depth", typedArray("Int32Array", depth));
+  treeObj.set("leafStart", typedArray("Int32Array", leafStart));
+  treeObj.set("leafCount", typedArray("Int32Array", leafCount));
 
   result.set("position", typedArray("Float32Array", out.position));
   result.set("normal", typedArray("Float32Array", out.normal));
@@ -416,15 +610,19 @@ val readImpl(const std::string& format, const val& bytes, double linDeflRatio, d
   result.set("index", typedArray("Uint32Array", out.index));
   result.set("faceGroup", typedArray("Uint32Array", out.faceGroup));
   result.set("faces", out.faces);
-  result.set("skipped", out.skipped);
+  result.set("skipped", skipped);
+  result.set("tree", treeObj);
+  timings.set("export", now() - t2);
   result.set("timings", timings);
+  js.report(PhaseExport, 1.0);
   return result;
 }
-val read(std::string format, val bytes, double linDeflRatio, double angDefl, val progressCb, bool heal)
+
+val read(std::string format, val bytes, val opts, val progressCb, val chunkCb)
 {
   try
   {
-    return readImpl(format, bytes, linDeflRatio, angDefl, progressCb, heal);
+    return readImpl(format, bytes, opts, progressCb, chunkCb);
   }
   catch (const Standard_Failure& e)
   {

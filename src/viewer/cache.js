@@ -4,9 +4,13 @@
 
 const DB_NAME = 'stepside';
 const VERSION = 1;
-const MAX_BYTES = 512 * 1024 * 1024;
-const MAX_ENTRY = 192 * 1024 * 1024;
-const SCHEMA = 2; // bump to invalidate entries when the mesh format changes
+const SCHEMA = 3; // bump to invalidate entries when the mesh format changes
+let maxBytes = 512 * 1024 * 1024; // from settings (cacheMB); 0 disables caching
+
+/** Applies the user's cache size setting (MB). */
+export function setCacheLimit(mb) {
+  maxBytes = Math.max(0, Number(mb) || 0) * 1024 * 1024;
+}
 
 let dbPromise = null;
 
@@ -30,14 +34,16 @@ function open() {
 const done = (tx) => new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = tx.onabort = () => rej(tx.error); });
 const wrap = (req) => new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
 
-export async function cacheKey(format, buffer) {
+/** `variant` covers settings that change the result (e.g. CAD tessellation quality). */
+export async function cacheKey(format, buffer, variant = '') {
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
   let hex = '';
   for (const b of hash) hex += b.toString(16).padStart(2, '0');
-  return `${SCHEMA}:${format}:${hex}`;
+  return `${SCHEMA}:${format}:${variant}:${hex}`;
 }
 
 export async function cacheGet(key) {
+  if (!maxBytes) return null;
   try {
     const db = await open();
     if (!db) return null;
@@ -57,14 +63,15 @@ export async function cacheGet(key) {
 
 function sizeOf(mesh, edges) {
   let n = 0;
-  for (const k of ['position', 'normal', 'color', 'index']) if (mesh[k]) n += mesh[k].byteLength;
-  return n + (edges ? edges.byteLength : 0);
+  for (const k of ['position', 'normal', 'color', 'index', 'treeBounds']) if (mesh[k]) n += mesh[k].byteLength;
+  if (edges) n += edges.positions.byteLength + edges.tri.byteLength;
+  return n;
 }
 
 export async function cachePut(key, mesh, edges) {
   try {
     const bytes = sizeOf(mesh, edges);
-    if (bytes > MAX_ENTRY) return;
+    if (!maxBytes || bytes > maxBytes * 0.5) return; // one model may use at most half the cache
     const db = await open();
     if (!db) return;
     const tx = db.transaction(['meshes', 'meta'], 'readwrite');
@@ -82,14 +89,42 @@ async function evict(db) {
   const meta = tx.objectStore('meta');
   const [keys, vals] = await Promise.all([wrap(meta.getAllKeys()), wrap(meta.getAll())]);
   let total = vals.reduce((a, v) => a + v.bytes, 0);
-  if (total > MAX_BYTES) {
+  if (total > maxBytes) {
     const order = keys.map((k, i) => [k, vals[i]]).sort((a, b) => a[1].used - b[1].used);
     for (const [k, v] of order) {
-      if (total <= MAX_BYTES) break;
+      if (total <= maxBytes) break;
       tx.objectStore('meshes').delete(k);
       meta.delete(k);
       total -= v.bytes;
     }
   }
   await done(tx);
+}
+
+/** {bytes, count} currently stored. */
+export async function cacheUsage() {
+  try {
+    const db = await open();
+    if (!db) return { bytes: 0, count: 0 };
+    const tx = db.transaction('meta', 'readonly');
+    const vals = await wrap(tx.objectStore('meta').getAll());
+    return { bytes: vals.reduce((a, v) => a + v.bytes, 0), count: vals.length };
+  } catch {
+    return { bytes: 0, count: 0 };
+  }
+}
+
+export async function cacheClear() {
+  const db = await open();
+  if (!db) return;
+  const tx = db.transaction(['meshes', 'meta'], 'readwrite');
+  tx.objectStore('meshes').clear();
+  tx.objectStore('meta').clear();
+  await done(tx);
+}
+
+/** Shrinks the cache to the current limit (after the limit is lowered). */
+export async function cacheTrim() {
+  const db = await open();
+  if (db) await evict(db);
 }

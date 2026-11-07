@@ -50,9 +50,25 @@ function remap(curve, f) {
   return 1;
 }
 
+// Tessellation quality presets: [linear deflection as a fraction of the
+// model's average size, angular deflection in radians].
+export const QUALITY = {
+  draft: [0.004, 0.8],
+  low: [0.002, 0.6],
+  standard: [0.001, 0.5],
+  fine: [0.0004, 0.3],
+};
+
+/**
+ * ctx: { occt?, baseUrl, progress(), options: {quality, fastFirstLook,
+ * progressive, names}, onChunk?(chunk) } — onChunk receives early previews
+ * ({type:'bounds'|'chunk', ...}) while the final mesh is still being built.
+ */
 export async function parseCad(format, bytes, ctx) {
   const occt = ctx.occt || (await loadOcct(ctx.baseUrl));
   const name = format === 'iges' ? 'IGES' : format === 'brep' ? 'BREP' : 'STEP';
+  const o = ctx.options || {};
+  const [linear, angular] = QUALITY[o.quality] || QUALITY.standard;
   const onProgress = (phase, f) => {
     let done = 0;
     for (let i = 0; i < phase; i++) done += WEIGHTS[i];
@@ -62,7 +78,12 @@ export async function parseCad(format, bytes, ctx) {
     ctx.progress('cad', Math.min(1, done + WEIGHTS[phase] * f), phase === 0 ? `Reading ${name}` : LABELS[phase], cap);
   };
   onProgress(0, 0);
-  const res = occt.read(format, bytes, 0.001, 0.5, onProgress, true);
+  const res = occt.read(format, bytes, {
+    linear, angular, heal: true,
+    names: o.names !== false,
+    coarse: o.fastFirstLook !== false,
+    progressive: o.progressive !== false,
+  }, onProgress, ctx.onChunk || null);
   if (res.error) throw new Error(res.error);
   ctx.timings = res.timings;
   ctx.skipped = res.skipped || 0;
@@ -73,5 +94,40 @@ export async function parseCad(format, bytes, ctx) {
     index: res.index,
     vertexColor: res.color,
     faceGroup: res.faceGroup,
+    tree: cadTree(res.tree, res.index.length / 3),
   }];
+}
+
+/**
+ * Engine tree (DFS order, depth per node, triangle range per leaf) -> flat
+ * node list with a triangle range for every node. In DFS order an assembly's
+ * leaves are contiguous, so its range runs from its first leaf to the start
+ * of the next node at the same or a shallower depth.
+ */
+export function cadTree(t, totalTris) {
+  const n = t.depth.length;
+  if (!n) return null;
+  const minDepth = Math.min(...t.depth);
+  const nodes = [];
+  // start of each node = its own leaf start, or the next leaf's start
+  const start = new Int32Array(n);
+  let next = totalTris;
+  for (let i = n - 1; i >= 0; i--) {
+    if (t.leafStart[i] >= 0) next = t.leafStart[i];
+    start[i] = next;
+  }
+  for (let i = 0; i < n; i++) {
+    let end = totalTris;
+    if (t.leafStart[i] >= 0) end = t.leafStart[i] + t.leafCount[i];
+    else {
+      for (let j = i + 1; j < n; j++) if (t.depth[j] <= t.depth[i]) { end = start[j]; break; }
+    }
+    nodes.push({
+      name: t.names[i] || (t.leafStart[i] >= 0 ? 'Part' : 'Assembly'),
+      depth: t.depth[i] - minDepth,
+      start: start[i],
+      count: Math.max(0, end - start[i]),
+    });
+  }
+  return nodes;
 }

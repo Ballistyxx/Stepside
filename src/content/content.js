@@ -4,6 +4,7 @@
 // iframe that is only created when a supported model file is being viewed.
 
 import browser from 'webextension-polyfill';
+import { loadSettings } from '../common/settings.js';
 
 const FORMATS = {
   step: 'step', stp: 'step', p21: 'step',
@@ -16,7 +17,6 @@ const FORMATS = {
 const BLOB_RE = /^\/([^/]+)\/([^/]+)\/blob\/(.+)$/;
 const EXT_RE = /\.([a-z0-9]+)$/i;
 const SECTION = 'section[aria-labelledby*="file-name-id"]';
-const AUTO_LOAD_LIMIT = 64 * 1024 * 1024;
 const HIDE_ATTR = 'data-stepside-hidden';
 
 let state = null; // the currently mounted viewer, if any
@@ -206,7 +206,7 @@ function getBytes(url, { onProgress, limit, onXhr } = {}) {
     xhr.open('GET', url);
     xhr.responseType = 'arraybuffer';
     xhr.onreadystatechange = () => {
-      if (xhr.readyState === 2 && limit) {
+      if (xhr.readyState === 2 && limit != null) {
         const len = Number(xhr.getResponseHeader('Content-Length'));
         if (len > limit) { xhr.abort(); resolve({ tooLarge: len }); }
       }
@@ -231,7 +231,8 @@ async function download(st, force) {
   let last = 0;
   try {
     const res = await getBytes(st.file.rawUrl, {
-      limit: force ? 0 : AUTO_LOAD_LIMIT,
+      // Auto-load size limit from settings (MB); 0 = always ask.
+      limit: force ? null : (await loadSettings()).autoLoadMB * 1024 * 1024,
       onXhr: (x) => { st.xhr = x; },
       onProgress: (loaded, total) => {
         const now = performance.now();

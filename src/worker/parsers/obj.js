@@ -1,5 +1,5 @@
 import { Scanner, latin1 } from '../scanner.js';
-import { GrowF32, GrowI32, GrowU8, GrowU16 } from '../grow.js';
+import { GrowF32, GrowI32, GrowU8, GrowU16, GrowU32 } from '../grow.js';
 
 /**
  * Wavefront OBJ. Supports v (with optional vertex colours), vn, f (any
@@ -15,6 +15,9 @@ export async function parseObj(bytes, ctx) {
   const cv = new GrowI32(1 << 16);
   const cn = new GrowI32(1 << 16);
   const tm = new GrowU16(1 << 14);
+  const tg = new GrowU32(1 << 14); // per-triangle object/group id
+  const groupNames = ['(default)'];
+  let group = 0;
   const materials = [];
   const matIndex = new Map();
   const mtllibs = [];
@@ -78,6 +81,7 @@ export async function parseObj(bytes, ctx) {
         cv.push3(poly[0], poly[i], poly[i + 1]);
         cn.push3(polyN[0], polyN[i], polyN[i + 1]);
         tm.push(mat);
+        tg.push(group);
       }
       s.skipLine();
     } else if (c0 === 117 && matchWord(b, s.p, 'usemtl')) {
@@ -85,6 +89,12 @@ export async function parseObj(bytes, ctx) {
       const name = readRest(s);
       if (!matIndex.has(name)) { matIndex.set(name, materials.length); materials.push(name); }
       mat = matIndex.get(name) + 1;
+    } else if ((c0 === 111 || c0 === 103) && (c1 === 32 || c1 === 9)) { // "o name" / "g name"
+      s.p += 2; s.skipSpaces();
+      const name = readRest(s) || `Group ${groupNames.length}`;
+      let id = groupNames.indexOf(name);
+      if (id < 0) { id = groupNames.length; groupNames.push(name); }
+      group = id;
     } else if (c0 === 109 && matchWord(b, s.p, 'mtllib')) {
       s.p += 6; s.skipSpaces();
       const name = readRest(s);
@@ -100,6 +110,29 @@ export async function parseObj(bytes, ctx) {
   const ntri = cv.n / 3;
 
   if (ntri === 0) return [{ points: true, position, vertexColor }];
+
+  // Make every object/group a contiguous run of triangles (stable counting
+  // sort) so the model tree can show/hide them as triangle ranges.
+  let groups = null;
+  {
+    const ng = groupNames.length, cnt = new Uint32Array(ng + 1);
+    for (let t = 0; t < ntri; t++) cnt[tg.a[t] + 1]++;
+    const used = [];
+    for (let g = 0; g < ng; g++) if (cnt[g + 1]) used.push(g);
+    if (used.length > 1) {
+      for (let g = 0; g < ng; g++) cnt[g + 1] += cnt[g];
+      groups = used.map((g) => ({ name: groupNames[g], start: cnt[g], count: cnt[g + 1] - cnt[g] }));
+      const cur = cnt.slice(0, ng);
+      const v2 = new Int32Array(ntri * 3), n2 = new Int32Array(ntri * 3), m2 = new Uint16Array(ntri);
+      for (let t = 0; t < ntri; t++) {
+        const d = cur[tg.a[t]]++;
+        v2[3 * d] = cv.a[3 * t]; v2[3 * d + 1] = cv.a[3 * t + 1]; v2[3 * d + 2] = cv.a[3 * t + 2];
+        n2[3 * d] = cn.a[3 * t]; n2[3 * d + 1] = cn.a[3 * t + 1]; n2[3 * d + 2] = cn.a[3 * t + 2];
+        m2[d] = tm.a[t];
+      }
+      cv.a = v2; cn.a = n2; tm.a = m2;
+    }
+  }
 
   // validate indices
   const ci = cv.a, nci = cn.a;
@@ -134,7 +167,7 @@ export async function parseObj(bytes, ctx) {
   const useNormals = anyNormalRef && !missingNormalRef && nrm.n > 0;
   if (!useNormals) {
     return [{
-      position, index: new Uint32Array(ci.buffer, 0, cv.n), vertexColor, faceColor, color: uniform,
+      position, index: new Uint32Array(ci.buffer, 0, cv.n), vertexColor, faceColor, color: uniform, groups,
     }];
   }
 
@@ -169,7 +202,7 @@ export async function parseObj(bytes, ctx) {
     }
     if (C) { C[3 * e] = vertexColor[v]; C[3 * e + 1] = vertexColor[v + 1]; C[3 * e + 2] = vertexColor[v + 2]; }
   }
-  return [{ position: P, normal: N, index, vertexColor: C, faceColor, color: uniform }];
+  return [{ position: P, normal: N, index, vertexColor: C, faceColor, color: uniform, groups }];
 }
 
 function clamp255(v) {

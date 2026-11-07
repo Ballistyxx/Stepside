@@ -30,6 +30,8 @@ function manifest(target) {
       resources: ['viewer/viewer.html'],
       matches: ['https://github.com/*'],
     }],
+    permissions: ['storage'],
+    options_ui: { page: 'options/options.html', open_in_tab: true },
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
@@ -63,6 +65,9 @@ function copyStatic(out) {
   mkdirSync(join(out, 'worker/vendor'), { recursive: true });
   cpSync(join(root, 'src/viewer/viewer.html'), join(out, 'viewer/viewer.html'));
   cpSync(join(root, 'src/viewer/viewer.css'), join(out, 'viewer/viewer.css'));
+  mkdirSync(join(out, 'options'), { recursive: true });
+  cpSync(join(root, 'src/options/options.html'), join(out, 'options/options.html'));
+  cpSync(join(root, 'src/options/options.css'), join(out, 'options/options.css'));
   // Prebuilt by native/build.sh (OpenCascade 8 -> WASM); committed in vendor/.
   for (const f of ['stepside-occt.js', 'stepside-occt.wasm', 'LICENSE-OCCT-LGPL-2.1.txt', 'LICENSE-OCCT-EXCEPTION.txt']) {
     cpSync(join(root, 'vendor', f), join(out, 'worker/vendor', f));
@@ -86,6 +91,7 @@ async function buildTarget(target) {
       format: 'esm', splitting: true, chunkNames: 'chunks/[name]-[hash]',
     },
     { ...common, define, entryPoints: [join(root, 'src/worker/worker.js')], outfile: join(out, 'worker/worker.js'), format: 'iife' },
+    { ...common, define, entryPoints: [join(root, 'src/options/options.js')], outfile: join(out, 'options/options.js'), format: 'esm' },
   ];
   if (watch) {
     for (const b of builds) await (await esbuild.context(b)).watch();

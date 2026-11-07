@@ -16,8 +16,33 @@ natively; Stepside covers the rest:
 | glTF | `.gltf` `.glb` | three.js GLTFLoader (+ meshopt); external buffers/textures fetched from the repo |
 
 A **3D / Source** switch sits above the viewer to get the original line-by-line
-view back. Viewer controls: drag to orbit, right-drag/shift to pan, wheel to
-zoom (towards the cursor). Keys: `F` reset view, `E` edges, `U` swap Y/Z up.
+view back.
+
+## Viewer
+
+- **Model tree** (left, collapsible): the real STEP/IGES assembly with product
+  names (OBJ `o`/`g` groups, VRML `DEF`s and glTF nodes too). Eye = show/hide,
+  Alt-click eye or double-click name = show only that part, click name = zoom to it.
+- **View presets** (top right): Iso, Front, Back, Left, Right, Top, Bottom, and
+  an orthographic camera.
+- **Display options** (bottom right): edges, wireframe, X-ray, section plane,
+  up axis, screenshot, fullscreen, settings.
+- **Section plane**: cut along X/Y/Z with a slider; cut faces are tinted.
+- **Orbit around a point**: middle-click the model to orbit around that point
+  (GPU depth pick, no CPU-side mesh needed).
+- Mouse: drag orbit, right-drag pan, wheel zoom to cursor. Keys: `F`/`0` iso,
+  `1`–`6` front/back/left/right/top/bottom, `O` ortho, `E` edges, `W`
+  wireframe, `X` X-ray, `S` section, `U` swap Y/Z up.
+
+## Settings
+
+Everything is configurable on the options page (gear button in the viewer, or
+the add-ons manager), applied live to open previews: each viewer feature above;
+CAD tessellation quality (Draft/Low/Standard/Fine); edges by default
+(Auto/On/Off); default up axis; **Fast first look** (CAD: coarse tessellation
+first, then refine — costs ~20% extra total time); **Progressive display** (CAD:
+parts appear as they're tessellated — free); auto-load size limit; cache size
+with usage and a Clear button.
 
 ## Install (development)
 

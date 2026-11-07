@@ -83,7 +83,7 @@ class Parser extends Scanner {
     if (id === 'DEF') {
       const name = this.ident();
       const node = this.statementFrom(this.ident());
-      if (node) this.defs.set(name, node);
+      if (node) { this.defs.set(name, node); if (!node.def) node.def = name; }
       return node;
     }
     if (id === 'USE') return this.defs.get(this.ident()) || null;
@@ -319,32 +319,36 @@ function children(node) {
   return out;
 }
 
-function traverse(node, m, ctx) {
+function traverse(node, m, ctx, name = null) {
   if (!node || !node.type || ctx.depth > 256) return;
   ctx.depth++;
   const f = node.f;
+  name = node.def || name;
   switch (node.type) {
     case 'Transform': {
       const mm = mul(m, transformMatrix(f));
-      for (const ch of children(node)) traverse(ch, mm, ctx);
+      for (const ch of children(node)) traverse(ch, mm, ctx, name);
       break;
     }
     case 'Switch': {
       const list = Array.isArray(f.choice) ? f.choice : Array.isArray(f.children) ? f.children : [];
       const w = num(f.whichChoice, -1);
-      if (w >= 0 && list[w]) traverse(list[w], m, ctx);
+      if (w >= 0 && list[w]) traverse(list[w], m, ctx, name);
       break;
     }
     case 'LOD': {
       const list = Array.isArray(f.level) ? f.level : Array.isArray(f.children) ? f.children : [];
-      if (list[0]) traverse(list[0], m, ctx);
+      if (list[0]) traverse(list[0], m, ctx, name);
       break;
     }
-    case 'Shape':
+    case 'Shape': {
+      const before = ctx.parts.length;
       shape(node, m, ctx);
+      for (let i = before; i < ctx.parts.length; i++) if (name) ctx.parts[i].name = name;
       break;
+    }
     default:
-      for (const ch of children(node)) traverse(ch, m, ctx);
+      for (const ch of children(node)) traverse(ch, m, ctx, name);
   }
   ctx.depth--;
 }

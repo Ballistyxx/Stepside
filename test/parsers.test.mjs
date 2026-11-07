@@ -16,7 +16,7 @@ const fxText = (n) => readFileSync(new URL(`./fixtures/${n}`, import.meta.url), 
 
 function run(parts, edges = true) {
   const { mesh, edgeInput } = finalize(parts);
-  const e = edges && edgeInput ? featureEdges(edgeInput) : null;
+  const e = edges && edgeInput ? featureEdges(edgeInput).positions : null;
   return { mesh, edges: e };
 }
 
@@ -121,3 +121,65 @@ for (const [file, fmt] of [['cube.stp', 'step'], ['as1.stp', 'step'], ['dm1.stp'
   });
 }
 
+
+// ---------------------------------------------------------------------------
+// Model tree, groups, streaming
+// ---------------------------------------------------------------------------
+test('obj o/g groups become contiguous tree nodes', async () => {
+  const src = [
+    'v 0 0 0', 'v 1 0 0', 'v 1 1 0', 'v 0 1 0', 'v 0 0 1',
+    'o A', 'f 1 2 3', 'o B', 'f 1 3 4', 'o A', 'f 1 2 5', 'f 2 3 5',
+  ].join('\n');
+  const parts = await parseObj(new TextEncoder().encode(src), {});
+  const { mesh } = finalize(parts);
+  assert.deepEqual(mesh.tree.map((n) => [n.name, n.start, n.count]), [['A', 0, 3], ['B', 3, 1]]);
+  assert.equal(mesh.treeBounds.length, 12);
+});
+
+test('vrml DEF names become tree nodes', () => {
+  const src = `#VRML V2.0 utf8
+DEF Left Transform { translation -2 0 0 children [ Shape { geometry Box {} } ] }
+DEF Right Transform { translation 2 0 0 children [ Shape { geometry Sphere {} } ] }`;
+  const { mesh } = finalize(parseVrml(new TextEncoder().encode(src)));
+  assert.deepEqual(mesh.tree.map((n) => n.name), ['Left', 'Right']);
+  assert.equal(mesh.tree[0].count, 12);
+  // bounds of "Left" are around x = -2 (minus the model centre, which is 0)
+  assert.ok(mesh.treeBounds[0] < -2.5 && mesh.treeBounds[3] > -1.5 && mesh.treeBounds[3] < -0.5);
+});
+
+test('feature edges are sorted by source triangle', () => {
+  const { edgeInput } = finalize(parsePly(fx('lucy.ply')));
+  const { positions, tri } = featureEdges(edgeInput);
+  assert.equal(tri.length, positions.length / 6);
+  for (let i = 1; i < tri.length; i++) assert.ok(tri[i] >= tri[i - 1]);
+});
+
+for (const [ffl, prog] of [[true, true], [true, false], [false, true], [false, false]]) {
+  test(`occt assembly tree + streaming (fastFirstLook=${ffl}, progressive=${prog})`, async () => {
+    const occt = await occtP;
+    const events = [];
+    const parts = await parseCad('step', fx('as1.stp'), {
+      occt, progress() {}, options: { fastFirstLook: ffl, progressive: prog }, onChunk: (c) => events.push(c),
+    });
+    const { mesh } = finalize(parts);
+    assert.equal(mesh.triangles, 3848, 'final mesh unchanged by preview passes');
+    // tree: one root covering everything; leaves partition the triangles
+    assert.equal(mesh.tree[0].depth, 0);
+    assert.equal(mesh.tree[0].count, mesh.triangles);
+    const leaves = mesh.tree.filter((n, i) => !(mesh.tree[i + 1] && mesh.tree[i + 1].depth > n.depth));
+    assert.equal(leaves.reduce((a, n) => a + n.count, 0), mesh.triangles);
+    assert.ok(mesh.tree.some((n) => n.name && n.name !== 'Part' && n.name !== 'Assembly'), 'STEP product names are read');
+    const chunks = events.filter((e) => e.type === 'chunk');
+    assert.equal(events[0].type, 'bounds');
+    const p0 = chunks.filter((c) => c.pass === 0), p1 = chunks.filter((c) => c.pass === 1);
+    assert.equal(p0.length > 0, ffl, 'coarse pass only with fast first look');
+    assert.equal(p1.length > 0, prog, 'fine chunks only when progressive');
+    if (ffl && !prog) assert.equal(p0.length, 1);
+    if (ffl && prog) assert.deepEqual(p0.map((c) => c.chunk), p1.map((c) => c.chunk), 'same chunking in both passes');
+    if (prog) assert.equal(p1.reduce((a, c) => a + c.index.length / 3, 0), mesh.triangles);
+    for (const c of chunks) {
+      const nv = c.position.length / 3;
+      for (const i of c.index) assert.ok(i - c.baseVertex >= 0 && i - c.baseVertex < nv);
+    }
+  });
+}

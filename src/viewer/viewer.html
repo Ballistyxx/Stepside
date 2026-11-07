@@ -9,23 +9,78 @@
 </head>
 <body>
 <div id="stage"></div>
+
+<aside id="tree" hidden aria-label="Model tree">
+  <div class="tree-head">
+    <button id="tree-close" type="button" class="icon" title="Hide model tree" aria-label="Hide model tree">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 1.06L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"/></svg>
+    </button>
+    <span class="tree-title">Model</span>
+    <span id="tree-count" class="tree-count"></span>
+    <button id="tree-showall" type="button" class="text" title="Show every part">Show all</button>
+  </div>
+  <div id="tree-list" role="tree"></div>
+</aside>
+<button id="tree-open" type="button" class="chip" hidden title="Show model tree">
+  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm3.75-1.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM3 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-1 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>
+  Model
+</button>
+
+<div id="presets" class="toolbar" hidden role="toolbar" aria-label="View presets">
+  <button type="button" data-view="iso" title="Isometric (0)">Iso</button>
+  <button type="button" data-view="front" title="Front (1)">Front</button>
+  <button type="button" data-view="back" title="Back (2)">Back</button>
+  <button type="button" data-view="left" title="Left (3)">Left</button>
+  <button type="button" data-view="right" title="Right (4)">Right</button>
+  <button type="button" data-view="top" title="Top (5)">Top</button>
+  <button type="button" data-view="bottom" title="Bottom (6)">Bottom</button>
+  <span class="sep"></span>
+  <button type="button" id="b-ortho" title="Orthographic camera (O)" aria-pressed="false">Ortho</button>
+</div>
+
+<div id="section" class="panel" hidden aria-label="Section plane">
+  <div class="seg" role="group" aria-label="Section axis">
+    <button type="button" data-axis="x" aria-pressed="true">X</button>
+    <button type="button" data-axis="y" aria-pressed="false">Y</button>
+    <button type="button" data-axis="z" aria-pressed="false">Z</button>
+  </div>
+  <input id="section-pos" type="range" min="-1" max="1" step="0.001" value="0" aria-label="Section position">
+  <button type="button" id="section-flip" class="icon" title="Flip side" aria-label="Flip side">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.22 14.78a.75.75 0 0 0 1.06-1.06L4.56 12h8.69a.75.75 0 0 0 0-1.5H4.56l1.72-1.72a.75.75 0 0 0-1.06-1.06l-3 3a.75.75 0 0 0 0 1.06l3 3Zm5.56-6.5a.75.75 0 1 1-1.06-1.06l1.72-1.72H2.75a.75.75 0 0 1 0-1.5h8.69L9.72 2.28a.75.75 0 0 1 1.06-1.06l3 3a.75.75 0 0 1 0 1.06l-3 3Z"/></svg>
+  </button>
+</div>
+
+<div id="display" class="toolbar" hidden role="toolbar" aria-label="Display options">
+  <button type="button" id="b-edges" class="icon" title="Edges (E)" aria-label="Edges" aria-pressed="false">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.37.14a.75.75 0 0 0-.74 0l-6.25 3.5a.75.75 0 0 0-.38.65v7.42c0 .27.15.52.38.65l6.25 3.5c.23.13.51.13.74 0l6.25-3.5a.75.75 0 0 0 .38-.65V4.29a.75.75 0 0 0-.38-.65ZM8 1.66l4.72 2.64L8 6.94 3.28 4.3Zm-5.5 3.9 4.75 2.66v5.3L2.5 10.86Zm6.25 7.96v-5.3l4.75-2.66v5.3Z"/></svg>
+  </button>
+  <button type="button" id="b-wire" class="icon" title="Wireframe (W)" aria-label="Wireframe" aria-pressed="false">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 1.5h13v13h-13Zm1.5 1.5v2.38L5.38 3Zm4.5 0L3 7.5v2.12L9.62 3Zm4.24 0L3 11.76V13h1.24L13 4.24V3ZM13 6.38 6.38 13h2.12L13 8.5Zm0 4.24L10.62 13H13Z"/></svg>
+  </button>
+  <button type="button" id="b-xray" class="icon" title="X-ray (X)" aria-label="X-ray" aria-pressed="false">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2c1.98 0 3.73.76 5.1 1.87C14.4 4.94 15.38 6.3 15.9 7.6a1 1 0 0 1 0 .8c-.52 1.3-1.5 2.66-2.8 3.73C11.73 13.24 9.98 14 8 14s-3.73-.76-5.1-1.87C1.6 11.06.62 9.7.1 8.4a1 1 0 0 1 0-.8c.52-1.3 1.5-2.66 2.8-3.73C4.27 2.76 6.02 2 8 2ZM1.68 8c.45 1 1.23 2.04 2.18 2.83C5 11.75 6.4 12.5 8 12.5s3-.75 4.14-1.67c.95-.79 1.73-1.83 2.18-2.83-.45-1-1.23-2.04-2.18-2.83C11 4.25 9.6 3.5 8 3.5s-3 .75-4.14 1.67C2.9 5.96 2.13 7 1.68 8ZM8 10.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Z"/></svg>
+  </button>
+  <button type="button" id="b-section" class="icon" title="Section plane (S)" aria-label="Section plane" aria-pressed="false">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8.75A.75.75 0 0 1 1.75 8h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 8.75ZM3.5 2h9A1.5 1.5 0 0 1 14 3.5V6h-1.5V3.5h-9V6H2V3.5A1.5 1.5 0 0 1 3.5 2Zm-1 9.5H4v1h8v-1h1.5v1A1.5 1.5 0 0 1 12 14H4a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>
+  </button>
+  <button type="button" id="b-up" title="Up axis (U)" aria-label="Switch up axis">Y</button>
+  <span class="sep"></span>
+  <button type="button" id="b-shot" class="icon" title="Save screenshot" aria-label="Save screenshot">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.04 1.5h3.92a1.5 1.5 0 0 1 1.3.76l.6 1.06c.04.08.13.13.22.13h1.67A1.75 1.75 0 0 1 15.5 5.2v7.55a1.75 1.75 0 0 1-1.75 1.75H2.25A1.75 1.75 0 0 1 .5 12.75V5.2a1.75 1.75 0 0 1 1.75-1.75h1.67c.09 0 .18-.05.22-.13l.6-1.06a1.5 1.5 0 0 1 1.3-.76ZM2.25 4.95a.25.25 0 0 0-.25.25v7.55c0 .14.11.25.25.25h11.5a.25.25 0 0 0 .25-.25V5.2a.25.25 0 0 0-.25-.25h-1.67a1.75 1.75 0 0 1-1.52-.89l-.6-1.06H6.04l-.6 1.06a1.75 1.75 0 0 1-1.52.89ZM8 11.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0-1.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/></svg>
+  </button>
+  <button type="button" id="b-full" class="icon" title="Fullscreen" aria-label="Fullscreen">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 1h3.5a.75.75 0 0 1 0 1.5H2.5v2.75a.75.75 0 0 1-1.5 0v-3.5C1 1.34 1.34 1 1.75 1Zm9 0h3.5c.41 0 .75.34.75.75v3.5a.75.75 0 0 1-1.5 0V2.5h-2.75a.75.75 0 0 1 0-1.5ZM1.75 10.5c.41 0 .75.34.75.75v2.25h2.75a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75v-3c0-.41.34-.75.75-.75Zm12.5 0c.41 0 .75.34.75.75v3a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h2.75v-2.25c0-.41.34-.75.75-.75Z"/></svg>
+  </button>
+  <button type="button" id="b-settings" class="icon" title="Stepside settings" aria-label="Settings">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8.2 8.2 0 0 1 .7.03c.37.04.65.32.73.68l.3 1.4c.03.15.15.3.32.38.3.13.58.3.85.48.15.1.33.13.48.08l1.36-.45c.35-.12.74-.02.96.28.3.4.57.84.79 1.3.16.33.08.72-.18.98l-1.06.96a.5.5 0 0 0-.16.45 5.6 5.6 0 0 1 0 .98.5.5 0 0 0 .16.45l1.06.96c.26.26.34.65.18.98-.22.46-.49.9-.79 1.3a.87.87 0 0 1-.96.28l-1.36-.45a.53.53 0 0 0-.48.08c-.27.19-.55.35-.85.48a.53.53 0 0 0-.32.38l-.3 1.4a.83.83 0 0 1-.73.68 8.2 8.2 0 0 1-1.4 0 .83.83 0 0 1-.73-.68l-.3-1.4a.53.53 0 0 0-.32-.38 5.1 5.1 0 0 1-.85-.48.53.53 0 0 0-.48-.08l-1.36.45a.87.87 0 0 1-.96-.28 8 8 0 0 1-.79-1.3.83.83 0 0 1 .18-.98l1.06-.96a.5.5 0 0 0 .16-.45 5.6 5.6 0 0 1 0-.98.5.5 0 0 0-.16-.45l-1.06-.96a.83.83 0 0 1-.18-.98c.22-.46.49-.9.79-1.3a.87.87 0 0 1 .96-.28l1.36.45c.15.05.33.02.48-.08.27-.19.55-.35.85-.48a.53.53 0 0 0 .32-.38l.3-1.4A.83.83 0 0 1 7.3.03 8.2 8.2 0 0 1 8 0Zm0 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>
+  </button>
+</div>
+
 <div id="status" role="status" aria-live="polite">
   <div class="spinner" aria-hidden="true"></div>
   <div id="status-text">Starting…</div>
   <div id="status-bar" hidden><i></i></div>
   <div id="status-actions"></div>
-</div>
-<div id="tools" hidden>
-  <button id="b-fit" type="button" title="Reset view (F)" aria-label="Reset view">
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.906.664a1.749 1.749 0 0 1 2.187 0l5.25 4.2c.415.332.657.835.657 1.367v7.019A1.75 1.75 0 0 1 13.25 15h-3.5a.75.75 0 0 1-.75-.75V9H7v5.25a.75.75 0 0 1-.75.75h-3.5A1.75 1.75 0 0 1 1 13.25V6.23c0-.531.242-1.034.657-1.366l5.25-4.2Zm1.25 1.171a.25.25 0 0 0-.312 0l-5.25 4.2a.25.25 0 0 0-.094.196v7.019c0 .138.112.25.25.25H5.5V8.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v5.25h2.75a.25.25 0 0 0 .25-.25V6.23a.25.25 0 0 0-.094-.195Z"/></svg>
-  </button>
-  <button id="b-edges" type="button" title="Toggle edges (E)" aria-label="Toggle edges" aria-pressed="true">
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.37.14a.75.75 0 0 0-.74 0l-6.25 3.5a.75.75 0 0 0-.38.65v7.42c0 .27.15.52.38.65l6.25 3.5c.23.13.51.13.74 0l6.25-3.5a.75.75 0 0 0 .38-.65V4.29a.75.75 0 0 0-.38-.65ZM8 1.66l4.72 2.64L8 6.94 3.28 4.3Zm-5.5 3.9 4.75 2.66v5.3L2.5 10.86Zm6.25 7.96v-5.3l4.75-2.66v5.3Z"/></svg>
-  </button>
-  <button id="b-up" type="button" title="Up axis" aria-label="Switch up axis">Y</button>
-  <button id="b-full" type="button" title="Fullscreen" aria-label="Fullscreen">
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 1h3.5a.75.75 0 0 1 0 1.5H2.5v2.75a.75.75 0 0 1-1.5 0v-3.5C1 1.34 1.34 1 1.75 1Zm9 0h3.5c.41 0 .75.34.75.75v3.5a.75.75 0 0 1-1.5 0V2.5h-2.75a.75.75 0 0 1 0-1.5ZM1.75 10.5c.41 0 .75.34.75.75v2.25h2.75a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75v-3c0-.41.34-.75.75-.75Zm12.5 0c.41 0 .75.34.75.75v3a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h2.75v-2.25c0-.41.34-.75.75-.75Z"/></svg>
-  </button>
 </div>
 <div id="info" hidden></div>
 </body>

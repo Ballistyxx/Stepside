@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stepside settings</title>
+<link rel="stylesheet" href="options.css">
+<script type="module" src="options.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <img src="../icons/icon-48.png" alt="" width="32" height="32">
+    <div>
+      <h1>Stepside</h1>
+      <p class="muted">3D previews for model files on GitHub. Changes save automatically and apply to open previews.</p>
+    </div>
+    <span id="saved" class="saved" aria-live="polite"></span>
+  </header>
+
+  <section>
+    <h2>Viewer features</h2>
+    <label class="row"><span><b>Model tree</b><small>Collapsible part/assembly list on the left: show, hide and zoom to parts.</small></span><input type="checkbox" data-key="modelTree"></label>
+    <label class="row"><span><b>Section plane</b><small>Cut through the model along X, Y or Z to see inside.</small></span><input type="checkbox" data-key="sectionPlane"></label>
+    <label class="row"><span><b>View presets</b><small>Iso, front, back, left, right, top and bottom views, plus an orthographic camera (top right).</small></span><input type="checkbox" data-key="viewPresets"></label>
+    <label class="row"><span><b>Display options</b><small>Edges, wireframe, X-ray, up axis, screenshot and fullscreen (bottom right).</small></span><input type="checkbox" data-key="displayOptions"></label>
+    <label class="row"><span><b>Orbit around a point</b><small>Middle-click the model to orbit around that point.</small></span><input type="checkbox" data-key="orbitPoint"></label>
+  </section>
+
+  <section>
+    <h2>Rendering</h2>
+    <label class="row"><span><b>Tessellation quality</b><small>How finely STEP, IGES and BREP surfaces are triangulated. Finer is smoother but slower.</small></span>
+      <select data-key="quality">
+        <option value="draft">Draft</option>
+        <option value="low">Low</option>
+        <option value="standard">Standard</option>
+        <option value="fine">Fine</option>
+      </select></label>
+    <label class="row"><span><b>Edges by default</b><small>Auto shows edges for CAD and hard-surface meshes, not for dense scans.</small></span>
+      <select data-key="edges">
+        <option value="auto">Auto</option>
+        <option value="on">Always on</option>
+        <option value="off">Always off</option>
+      </select></label>
+    <label class="row"><span><b>Default up axis</b><small>Auto: Z for CAD and OFF, Y for OBJ, PLY, VRML and glTF.</small></span>
+      <select data-key="upAxis">
+        <option value="auto">Auto</option>
+        <option value="y">Y up</option>
+        <option value="z">Z up</option>
+      </select></label>
+  </section>
+
+  <section>
+    <h2>Loading</h2>
+    <label class="row"><span><b>Fast first look</b><small>CAD files: show a quick coarse tessellation first, then refine. Costs some extra total time.</small></span><input type="checkbox" data-key="fastFirstLook"></label>
+    <label class="row"><span><b>Progressive display</b><small>CAD files: show parts as they are tessellated instead of all at once.</small></span><input type="checkbox" data-key="progressive"></label>
+    <label class="row"><span><b>Auto-load size limit</b><small>Larger files ask before rendering. 0 always asks.</small></span>
+      <span class="unit"><input type="number" min="0" max="4096" step="1" data-key="autoLoadMB"> MB</span></label>
+  </section>
+
+  <section>
+    <h2>Cache</h2>
+    <label class="row"><span><b>Cache size</b><small>Finished models are stored by content, so reopening a file is instant. 0 disables the cache.</small></span>
+      <span class="unit"><input type="number" min="0" max="8192" step="16" data-key="cacheMB"> MB</span></label>
+    <div class="row"><span><b>Stored</b><small id="usage">…</small></span><button type="button" id="clear">Clear cache</button></div>
+  </section>
+
+  <footer><button type="button" id="reset" class="link">Restore defaults</button></footer>
+</main>
+</body>
+</html>

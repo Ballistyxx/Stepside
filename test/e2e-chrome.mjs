@@ -62,6 +62,30 @@ try {
     if (!result.ok) failures++;
     console.log(`${result.ok ? 'PASS' : 'FAIL'} ${((Date.now() - t) / 1000).toFixed(1)}s ${url.split('/').pop()} — ${result.text.replace(/\s+/g, ' ')}`);
   }
+  // Options page UI: toggles persist, cache usage shows, Clear empties it.
+  {
+    const src = await page.locator('.stepside-host iframe').getAttribute('src').catch(() => null);
+    if (src) {
+      const base = src.replace(/\/viewer\/.*$/, '');
+      const opt = await ctx.newPage();
+      await opt.goto(`${base}/options/options.html`);
+      const sp = opt.locator('[data-key="sectionPlane"]');
+      const before = await sp.isChecked();
+      await sp.click();
+      await opt.waitForTimeout(300);
+      await opt.reload();
+      const after = await opt.locator('[data-key="sectionPlane"]').isChecked();
+      const usage = await opt.locator('#usage').textContent();
+      await opt.screenshot({ path: join(outDir, 'chrome-options.png') });
+      await opt.click('#clear');
+      await opt.waitForTimeout(300);
+      const cleared = await opt.locator('#usage').textContent();
+      const okOpt = before === false && after === true && /^0 models/.test(cleared);
+      if (!okOpt) failures++;
+      console.log(`${okOpt ? 'PASS' : 'FAIL'} options page — section ${before} -> ${after} after reload; cache "${usage}" -> "${cleared}"`);
+      await opt.close();
+    }
+  }
 } finally {
   await ctx.close();
   rmSync(profile, { recursive: true, force: true });
