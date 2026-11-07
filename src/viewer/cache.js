@@ -4,8 +4,8 @@
 
 const DB_NAME = 'stepside';
 const VERSION = 1;
-const MAX_BYTES = 256 * 1024 * 1024;
-const MAX_ENTRY = 96 * 1024 * 1024;
+const MAX_BYTES = 512 * 1024 * 1024;
+const MAX_ENTRY = 192 * 1024 * 1024;
 const SCHEMA = 2; // bump to invalidate entries when the mesh format changes
 
 let dbPromise = null;

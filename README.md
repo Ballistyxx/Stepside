@@ -6,7 +6,7 @@ natively; Stepside covers the rest:
 
 | Format | Extensions | Engine |
 | --- | --- | --- |
-| STEP | `.step` `.stp` `.p21` | OpenCascade (occt-import-js, WASM) — colours + true B-rep edges |
+| STEP | `.step` `.stp` `.p21` | OpenCascade 8 (own WASM build, see `native/`) — colours + true B-rep edges |
 | IGES | `.iges` `.igs` | OpenCascade |
 | BREP | `.brep` `.brp` | OpenCascade |
 | OBJ | `.obj` | custom parser — `vn`, vertex colours, polygons, `mtllib` `Kd` colours |
@@ -55,7 +55,7 @@ npm run build            # -> dist/firefox, dist/chrome
 - **Render on demand.** No animation loop: frames are drawn only while the
   camera moves (including damping), then rendering stops — 0 frames when idle.
 - **Content-addressed cache.** Results that took >200 ms are cached in
-  IndexedDB by the SHA-256 of the file (LRU, 256 MB cap). Re-opening the same
+  IndexedDB by the SHA-256 of the file (LRU, 512 MB cap). Re-opening the same
   file — on any branch or commit — skips parsing (e.g. a 13.5 MB STEP goes from
   ~9 s to ~0.1 s).
 
@@ -66,10 +66,38 @@ src/content/content.js     URL detection, iframe injection, downloads, 3D/Source
 src/viewer/                iframe page: three.js renderer, controls, glTF path, cache
 src/worker/                parse worker: scanner, mesh pipeline, parsers/*
 scripts/build.mjs          esbuild -> dist/{firefox,chrome} with per-browser manifests
-scripts/patch-occt.mjs     removes embind's `new Function` use (blocked by MV3 CSP)
+native/                    OpenCascade -> WASM importer (C++) and its build script
+vendor/                    prebuilt stepside-occt.{js,wasm} (output of native/build.sh)
 scripts/icons.mjs          generates icons
 test/                      unit tests (node --test) and real-browser E2E tests
 ```
+
+## CAD engine (`native/`)
+
+STEP/IGES/BREP go through Stepside's own OpenCascade 8.0.1 WASM build rather
+than occt-import-js (which is `-Oz`, does a document-wide label search per face
+for colours, and returns every number through a separate JS call — ~5× slower,
+and it has no progress reporting). The importer (`native/src/stepside_occt.cpp`):
+
+- is `-O3` + SIMD with native WASM exceptions and mimalloc;
+- skips XDE data a viewer never uses (names, layers, GD&T, materials, …);
+- uses a *viewer healing profile*: OCCT's normal shape fixing minus the
+  self-intersection/notch repairs, which only matter for modelling (identical
+  output on every test file, ~20% faster on large assemblies);
+- meshes each unique part once at its origin; instances reuse the triangulation
+  (meshing the assembled compound re-meshes every instance and can exhaust the
+  4 GB WASM heap);
+- resolves colours with XCAFPrs styles and writes one merged mesh straight into
+  typed arrays;
+- reports progress per phase (bytes lexed, B-rep transfer, faces meshed), which
+  the viewer maps to a time-proportional bar;
+- makes a null `occ::handle` dereference throw `Standard_NullObject` (patched in
+  by `build.sh`) so OCCT's own per-edge/per-face error recovery works in WASM,
+  and skips (and reports) any assembly part that still fails to export.
+
+Rebuilding is only needed when changing the C++: `native/build.sh setup` once
+(emsdk 4.0.10 + OCCT sources + static libs, ~5 min on 15 cores, all under the
+gitignored `native/.deps`), then `native/build.sh` to relink in seconds.
 
 ## Tests
 
@@ -83,9 +111,9 @@ npm run e2e:chrome             # Chromium via Playwright (set CHROME_PATH if nee
 
 ## Known limitations
 
-- Large STEP files are bounded by OpenCascade's STEP reader in single-threaded
-  WASM (~8 s for a 13.5 MB assembly; tessellation is a small part of that).
-  A custom multi-threaded/SIMD OCCT build is the next big speed-up.
+- STEP import is bounded by OpenCascade's single-threaded reader (threads
+  would need cross-origin isolation, which an iframe inside github.com can't
+  get). A 34 MB Onshape assembly takes ~7 s, a 75 MB one ~14 s.
 - Draco-compressed glTF (`KHR_draco_mesh_compression`) and KTX2 textures are
   not supported yet.
 - VRML: PROTO instances, Inline, Extrusion, ElevationGrid and line/point sets

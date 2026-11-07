@@ -32,12 +32,14 @@ export function loadOcct(baseUrl) {
 }
 
 // Share of total engine time per phase (read, transfer, mesh, export),
-// measured on real assemblies (e.g. a 34 MB Onshape export: 1.0 / 5.4 / 2.3 /
-// 0.05 s); turns OCCT's per-phase progress into one time-proportional bar.
-const WEIGHTS = [0.11, 0.62, 0.26, 0.01];
-// OCCT's transfer reports unevenly (its first quarter takes ~60% of the time);
-// remap its fraction so the bar tracks time. Piecewise linear [in, out].
-const TRANSFER_CURVE = [[0, 0], [0.25, 0.6], [0.5, 0.93], [1, 1]];
+// measured on two large Onshape assemblies (34 MB and 75 MB); turns OCCT's
+// per-phase progress into one time-proportional bar.
+const WEIGHTS = [0.13, 0.6, 0.25, 0.02];
+// OCCT's transfer progress is front-loaded (its first quarter covers ~87% of
+// the phase's time, mostly per-part healing); remap so the bar tracks time.
+// Piecewise linear [reported fraction, share of phase time]. Meshing is
+// reported per part (weighted by face count) and is already ~linear.
+const TRANSFER_CURVE = [[0, 0], [0.1, 0.14], [0.25, 0.87], [0.75, 0.96], [1, 1]];
 const LABELS = ['Reading', 'Building B-rep', 'Tessellating', 'Collecting faces'];
 
 function remap(curve, f) {
@@ -63,6 +65,7 @@ export async function parseCad(format, bytes, ctx) {
   const res = occt.read(format, bytes, 0.001, 0.5, onProgress, true);
   if (res.error) throw new Error(res.error);
   ctx.timings = res.timings;
+  ctx.skipped = res.skipped || 0;
   if (!res.index.length) throw new Error('The file contains no surfaces to display.');
   return [{
     position: res.position,

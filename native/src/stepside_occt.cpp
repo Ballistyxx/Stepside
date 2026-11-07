@@ -26,10 +26,12 @@
 #include <Message_ProgressIndicator.hxx>
 #include <Message_ProgressScope.hxx>
 #include <Quantity_Color.hxx>
+#include <Standard_Failure.hxx>
 #include <RWMesh_FaceIterator.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
-#include <ShapeProcess.hxx>
+#include <DESTEP_Parameters.hxx>
+#include <DE_ShapeFixParameters.hxx>
 #include <NCollection_Sequence.hxx>
 #include <TDF_Label.hxx>
 #include <TDocStd_Document.hxx>
@@ -144,6 +146,7 @@ struct Output
   std::vector<uint32_t> index, faceGroup;
   std::vector<uint8_t>  color;
   uint32_t              faces = 0;
+  uint32_t              skipped = 0; //!< leaf parts that failed to export
 };
 
 constexpr uint32_t ANGLE_GROUP = 0xffffffffu;
@@ -171,8 +174,6 @@ val typedArray(const char* ctor, const std::vector<T>& v)
 bool readStep(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Document>& doc, JsProgress& js, bool heal)
 {
   STEPCAFControl_Reader reader;
-  if (!heal)
-    reader.ChangeReader().SetShapeProcessFlags(ShapeProcess::OperationsFlags());
   reader.SetColorMode(true);
   reader.SetNameMode(false);
   reader.SetLayerMode(false);
@@ -189,6 +190,23 @@ bool readStep(const std::vector<uint8_t>& data, const occ::handle<TDocStd_Docume
   if (reader.ReadStream("model.step", in) != IFSelect_RetDone)
     return false;
   js.report(PhaseRead, 1.0);
+  // Must come after ReadStream: the actor holding these only exists then.
+  if (heal)
+  {
+    // Viewer healing profile: keep the fixes that make faces meshable
+    // (pcurves, wire order, seams, same-parameter, tolerances) but skip the
+    // expensive self-intersection repairs, which matter for modelling with
+    // the B-rep, not for drawing it.
+    DE_ShapeFixParameters p = DESTEP_Parameters::GetDefaultShapeFixParameters();
+    using M = DE_ShapeFixParameters::FixMode;
+    p.FixSelfIntersectionMode             = M::NotFix;
+    p.FixSelfIntersectingEdgeMode         = M::NotFix;
+    p.FixIntersectingEdgesMode            = M::NotFix;
+    p.FixNonAdjacentIntersectingEdgesMode = M::NotFix;
+    p.FixIntersectingWiresMode            = M::NotFix;
+    p.FixNotchedEdgesMode                 = M::NotFix;
+    reader.ChangeReader().SetShapeFixParameters(p);
+  }
 
   occ::handle<OcctProgress> pi = new OcctProgress(js, PhaseTransfer);
   return reader.Transfer(doc, pi->Start());
@@ -235,6 +253,9 @@ void exportMesh(const occ::handle<TDocStd_Document>& doc, Output& out, JsProgres
     const XCAFPrs_DocumentNode& node = ex.Current();
     const size_t   triStart  = out.index.size() / 3;
     const uint32_t faceStart = out.faces;
+    const size_t   posStart = out.position.size(), colStart = out.color.size();
+    try
+    {
     for (RWMesh_FaceIterator it(node.RefLabel, node.Location, true, node.Style); it.More(); it.Next())
     {
       if (it.IsEmpty())
@@ -265,6 +286,14 @@ void exportMesh(const occ::handle<TDocStd_Document>& doc, Output& out, JsProgres
       }
       ++out.faces;
     }
+    }
+    catch (const Standard_Failure&)
+    {
+      // A broken part: drop whatever it emitted and keep the rest of the model.
+      out.position.resize(posStart); out.normal.resize(posStart); out.color.resize(colStart);
+      out.index.resize(triStart * 3); out.faceGroup.resize(triStart); out.faces = faceStart;
+      ++out.skipped;
+    }
     // Solids converted from meshes (STL -> STEP) have ~one B-rep face per
     // triangle; drawing every face boundary would just show the tessellation.
     const uint32_t nf = out.faces - faceStart;
@@ -277,7 +306,7 @@ void exportMesh(const occ::handle<TDocStd_Document>& doc, Output& out, JsProgres
   js.report(PhaseExport, 1.0);
 }
 
-val read(std::string format, val bytes, double linDeflRatio, double angDefl, val progressCb, bool heal)
+val readImpl(const std::string& format, const val& bytes, double linDeflRatio, double angDefl, const val& progressCb, bool heal)
 {
   silenceMessenger();
   JsProgress js(progressCb);
@@ -302,27 +331,46 @@ val read(std::string format, val bytes, double linDeflRatio, double angDefl, val
     return result;
   }
 
-  // Mesh every unique shape once (instances share TShapes and so faces).
+  // Mesh each unique part prototype once, at its own origin. Triangulations
+  // live on the (shared) TFaces, so every instance of a part reuses them.
+  // Meshing the whole assembly as one compound instead makes BRepMesh treat
+  // each located instance as separate faces: N instances of a big part cost N
+  // times the work and memory (enough to exhaust the 4 GB WASM heap).
   occ::handle<XCAFDoc_ShapeTool> shapeTool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
-  NCollection_Sequence<TDF_Label>              roots;
-  shapeTool->GetFreeShapes(roots);
-  TopoDS_Compound comp;
-  BRep_Builder    bb;
-  bb.MakeCompound(comp);
-  int leafEstimate = 0;
-  for (const TDF_Label& l : roots)
+  NCollection_Sequence<TDF_Label> labels;
+  shapeTool->GetShapes(labels);
+  std::vector<std::pair<TopoDS_Shape, int>> parts; // prototype, face count
+  int  totalFaces   = 0;
+  int  leafEstimate = labels.Length();
+  for (const TDF_Label& l : labels)
   {
+    if (XCAFDoc_ShapeTool::IsAssembly(l))
+      continue;
     TopoDS_Shape s = XCAFDoc_ShapeTool::GetShape(l);
-    if (!s.IsNull())
-      bb.Add(comp, s);
+    if (s.IsNull())
+      continue;
+    s.Location(TopLoc_Location());
+    int nf = 0;
+    for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next())
+      ++nf;
+    if (nf == 0)
+      continue;
+    parts.emplace_back(s, nf);
+    totalFaces += nf;
   }
-  {
-    NCollection_Sequence<TDF_Label> all;
-    shapeTool->GetShapes(all);
-    leafEstimate = all.Length();
-  }
+  // Deflection is relative to the assembled model's size (as placed), so
+  // tessellation density doesn't depend on how the file structures parts.
   Bnd_Box box;
-  BRepBndLib::Add(comp, box, false);
+  {
+    NCollection_Sequence<TDF_Label> roots;
+    shapeTool->GetFreeShapes(roots);
+    for (const TDF_Label& l : roots)
+    {
+      const TopoDS_Shape s = XCAFDoc_ShapeTool::GetShape(l);
+      if (!s.IsNull())
+        BRepBndLib::Add(s, box, false);
+    }
+  }
   double deflection = 0.1;
   if (!box.IsVoid())
   {
@@ -338,7 +386,19 @@ val read(std::string format, val bytes, double linDeflRatio, double angDefl, val
   params.InParallel = false;
   {
     occ::handle<OcctProgress> pi = new OcctProgress(js, PhaseMesh);
-    BRepMesh_IncrementalMesh mesher(comp, params, pi->Start());
+    Message_ProgressScope     scope(pi->Start(), "Mesh", std::max(1, totalFaces));
+    for (const auto& [shape, nf] : parts)
+    {
+      Message_ProgressRange range = scope.Next(nf);
+      try
+      {
+        BRepMesh_IncrementalMesh mesher(shape, params, range);
+      }
+      catch (const Standard_Failure&)
+      {
+        // Leave this part (partly) untriangulated; export skips empty faces.
+      }
+    }
   }
   js.report(PhaseMesh, 1.0);
   double t2 = now();
@@ -356,8 +416,28 @@ val read(std::string format, val bytes, double linDeflRatio, double angDefl, val
   result.set("index", typedArray("Uint32Array", out.index));
   result.set("faceGroup", typedArray("Uint32Array", out.faceGroup));
   result.set("faces", out.faces);
+  result.set("skipped", out.skipped);
   result.set("timings", timings);
   return result;
+}
+val read(std::string format, val bytes, double linDeflRatio, double angDefl, val progressCb, bool heal)
+{
+  try
+  {
+    return readImpl(format, bytes, linDeflRatio, angDefl, progressCb, heal);
+  }
+  catch (const Standard_Failure& e)
+  {
+    val r = val::object();
+    r.set("error", std::string("OpenCascade failed: ") + (e.what() && *e.what() ? e.what() : "internal error"));
+    return r;
+  }
+  catch (const std::exception& e)
+  {
+    val r = val::object();
+    r.set("error", std::string("OpenCascade failed: ") + e.what());
+    return r;
+  }
 }
 } // namespace
 

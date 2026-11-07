@@ -58,6 +58,7 @@ async function parse(format, buffer) {
   parts = null;
   mesh.parseMs = performance.now() - t0;
   if (ctx.timings) mesh.timings = ctx.timings;
+  if (ctx.skipped) mesh.skipped = ctx.skipped;
   mesh.units = cad ? 'mm' : null;
   post(mesh, transfer);
   if (edgeInput) {

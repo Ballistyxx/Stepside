@@ -306,6 +306,7 @@ function showMesh(d) {
     d.type === 'points' ? `${fmtInt(d.vertices)} points` : `${fmtInt(d.triangles)} triangles`,
     fmtSize(d.size, d.units),
     `${(total / 1000).toFixed(2)} s${d.cached ? ' (cached)' : ''}`,
+    d.skipped ? `⚠ ${d.skipped} broken part${d.skipped > 1 ? 's' : ''} skipped` : '',
   ].filter(Boolean).join('  ·  ');
   infoEl.title = d.cached
     ? `Loaded from cache · total incl. download: ${total.toFixed(0)} ms`

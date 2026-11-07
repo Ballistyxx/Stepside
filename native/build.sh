@@ -26,6 +26,7 @@ setup() {
     (cd "$DEPS/emsdk" && ./emsdk install $EMSDK_VERSION && ./emsdk activate $EMSDK_VERSION)
   fi
   [ -d "$DEPS/occt" ] || git clone -q --depth 1 --branch $OCCT_TAG https://github.com/Open-Cascade-SAS/OCCT.git "$DEPS/occt"
+  patch_occt
   source "$DEPS/emsdk/emsdk_env.sh" >/dev/null
   emcmake cmake -G Ninja -S "$DEPS/occt" -B "$DEPS/occt-build" -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_LIBRARY_TYPE=Static -DBUILD_MODULE_Draw=OFF -DBUILD_USE_PCH=OFF \
@@ -35,6 +36,30 @@ setup() {
     "-DCMAKE_CXX_FLAGS=$CXXFLAGS" "-DCMAKE_C_FLAGS=-O3 -msimd128" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG"
   # shellcheck disable=SC2086
   ninja -C "$DEPS/occt-build" -j"$JOBS" $TOOLKITS
+}
+
+# Native OCCT turns a null-handle dereference into a hardware fault, converts
+# it to an exception (OCC_CATCH_SIGNALS) and its algorithms catch it and skip
+# the bad edge/face. In WASM address 0 is readable, so the same bug becomes an
+# uncatchable "indirect call to null" trap that aborts the whole import. Make
+# occ::handle throw Standard_NullObject instead so OCCT's own recovery works.
+patch_occt() {
+  local H="$DEPS/occt/src/FoundationClasses/TKernel/Standard/Standard_Handle.hxx"
+  local C="$DEPS/occt/src/FoundationClasses/TKernel/Standard/Standard_Transient.cxx"
+  grep -q STEPSIDE_NULL_CHECK "$H" && return
+  python3 - "$H" "$C" <<'PY'
+import sys
+h, c = sys.argv[1], sys.argv[2]
+s = open(h).read()
+s = s.replace("namespace opencascade\n{", "// STEPSIDE_NULL_CHECK\n[[noreturn]] Standard_EXPORT void Standard_ThrowNullHandle();\n\nnamespace opencascade\n{", 1)
+s = s.replace("T* operator->() const { return static_cast<T*>(this->entity); }",
+  "T* operator->() const\n  {\n    if (__builtin_expect(this->entity == nullptr, 0)) Standard_ThrowNullHandle();\n    return static_cast<T*>(this->entity);\n  }")
+s = s.replace("T& operator*() const { return *get(); }",
+  "T& operator*() const\n  {\n    if (__builtin_expect(this->entity == nullptr, 0)) Standard_ThrowNullHandle();\n    return *get();\n  }")
+assert s.count("Standard_ThrowNullHandle") == 3, "Standard_Handle.hxx layout changed"
+open(h, "w").write(s)
+open(c, "a").write('\n// STEPSIDE_NULL_CHECK\n#include <Standard_NullObject.hxx>\nvoid Standard_ThrowNullHandle()\n{\n  throw Standard_NullObject("null handle dereference");\n}\n')
+PY
 }
 
 link() {
@@ -57,6 +82,7 @@ link() {
 
 case "${1:-link}" in
   setup) setup; link ;;
+  patch) patch_occt ;;
   link) link ;;
   *) echo "usage: $0 [setup|link]"; exit 1 ;;
 esac
