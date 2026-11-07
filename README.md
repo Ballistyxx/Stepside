@@ -1,6 +1,6 @@
 # Stepside
 
-A Manifest V3 WebExtension (Firefox first, Chrome too) that renders 3D model
+A Manifest V3 WebExtension (Firefox first, Chrome and Safari too) that renders 3D model
 files on GitHub in place of the raw-text blob view. GitHub previews `.stl`
 natively; Stepside covers the rest:
 
@@ -48,13 +48,18 @@ with usage and a Clear button.
 
 ```sh
 npm install
-npm run build            # -> dist/firefox, dist/chrome
+npm run build            # -> dist/firefox, dist/chrome, dist/safari
 ```
 
 - **Firefox**: `npm run start:firefox` (web-ext, temporary profile), or
   `about:debugging` → This Firefox → Load Temporary Add-on → `dist/firefox/manifest.json`.
   Needs Firefox 140+.
 - **Chrome**: `chrome://extensions` → Developer mode → Load unpacked → `dist/chrome`.
+- **Safari** (macOS + Xcode): `npm run safari` builds and wraps `dist/safari` in
+  an Xcode project at `dist/safari-xcode/Stepside`. Open it, run the macOS (or
+  iOS) scheme, then enable Stepside in Safari → Settings → Extensions. Unsigned
+  local builds need Develop → Developer Settings → Allow unsigned extensions.
+  Needs Safari 17+.
 - `npm run package` writes zips to `dist/` for store submission.
 
 ## Performance design
@@ -90,7 +95,8 @@ npm run build            # -> dist/firefox, dist/chrome
 src/content/content.js     URL detection, iframe injection, downloads, 3D/Source toggle
 src/viewer/                iframe page: three.js renderer, controls, glTF path, cache
 src/worker/                parse worker: scanner, mesh pipeline, parsers/*
-scripts/build.mjs          esbuild -> dist/{firefox,chrome} with per-browser manifests
+scripts/build.mjs          esbuild -> dist/{firefox,chrome,safari} with per-browser manifests
+scripts/safari.mjs         wraps dist/safari in an Xcode app (safari-web-extension-converter)
 native/                    OpenCascade -> WASM importer (C++) and its build script
 vendor/                    prebuilt stepside-occt.{js,wasm} (output of native/build.sh)
 scripts/icons.mjs          generates icons
